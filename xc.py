@@ -84,26 +84,47 @@ class Console:
           command, *args = line[1:].split(" ")
           if command == "roster":
             roster = self.xmpp.client_roster
-            if "raw" in args:
-              print("\n".join("%s:\n%s\n%s" % (jid, roster[jid], roster[jid].resources) for jid in roster if jid != self.xmpp.jid))
-            else:
-              rows = []
-              status_map = {"away": "a", "xa": "x"}
-              for jid in filter(lambda jid: jid != self.xmpp.jid, roster):
-                entry = roster[jid]
-                rows.append(("".join(status_map.get(r["show"], "*") for r in entry.resources.values()),
-                             entry["name"],
-                             jid,
-                             entry["subscription"]))
+            rows = []
+            status_map = {"away": "a", "xa": "x"}
+            for jid in filter(lambda jid: jid != self.xmpp.jid, roster):
+              entry = roster[jid]
+              rows.append(("".join(status_map.get(r["show"], "*") for r in entry.resources.values()),
+                           entry["name"],
+                           jid,
+                           entry["subscription"]))
             widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
             if "all" not in args:
               rows = filter(lambda row: row[0], rows)
             for row in rows:
               print("   ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)))
+          elif command == "name":
+            try:
+              jid = args[0]
+              name = args[1]
+            except IndexError:
+              print("usage: /name JID NAME")
+            else:
+              self.xmpp.update_roster(jid, name=name)
           elif command == "quit":
             self.xmpp.disconnect()
             sys.exit(0)
             break
+          elif command == "help":
+            print("To send a message, type a contact's name (tab-completion is available),")
+            print("followed by a colon and space, followed by your message. After the first")
+            print("message, xc defaults to sending to the same contact.")
+            print("")
+            print("Example:")
+            print("")
+            print("   michael: hello")
+            print("")
+            print("Commands:")
+            print("")
+            print("/roster          print non-offline contacts")
+            print("/roster all      print all contacts")
+            print("/name JID NAME   set the name for a contact")
+            print("/quit            disconnect and then quit (also ctrl-d, ctrl-c)")
+            print("/help            this help")
           else:
             print("unrecognised command")
         else:
