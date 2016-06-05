@@ -18,6 +18,7 @@ class Client(ClientXMPP):
     self.connected = connected
     self.callback = callback
     self.add_event_handler("session_start", self.session_start)
+    self.add_event_handler("changed_status", self.changed_status)
     self.add_event_handler("message", self.message)
 
   def session_start(self, e):
@@ -27,6 +28,10 @@ class Client(ClientXMPP):
     self.connected.notify()
     self.connected.release()
     del self.connected
+
+  def changed_status(self, presence):
+    if not str(presence["from"]).startswith(self.jid + "/"):
+      self.callback("status", presence)
 
   def message(self, msg):
     self.callback("message", msg)
@@ -49,7 +54,7 @@ class Console:
       completions = [c for c in commands if c.startswith(text)]
     else:
       roster = self.xmpp.client_roster
-      names = [roster[k]['name'] for k in roster.keys() if k != self.xmpp.jid]
+      names = [roster[k]["name"] for k in roster.keys() if k != self.xmpp.jid]
       completions = [n+": " for n in names if n.startswith(text)]
     try:
       return completions[state]
@@ -59,7 +64,11 @@ class Console:
   def on_event(self, event, *args):
     if event == "message":
       msg = args[0]
-      self.prepend(msg)
+      # TODO don't print the whole stanza!
+      self.prepend(str(msg))
+    elif event == "status":
+      presence = args[0]
+      self.prepend("%s: %s" % (presence["from"], presence["show"]))
 
   def loop(self):
     next_recipient = None
@@ -75,29 +84,22 @@ class Console:
           command, *args = line[1:].split(" ")
           if command == "roster":
             roster = self.xmpp.client_roster
-            if args and args[0] == "raw":
-              for jid in roster:
-                if jid != self.xmpp.jid:
-                  print("%s:\n%s\n%s" % (jid, roster[jid], roster[jid].resources))
+            if "raw" in args:
+              print("\n".join("%s:\n%s\n%s" % (jid, roster[jid], roster[jid].resources) for jid in roster if jid != self.xmpp.jid))
             else:
               rows = []
               status_map = {"away": "a", "xa": "x"}
-              for jid in roster:
-                if jid == self.xmpp.jid:
-                  continue
+              for jid in filter(lambda jid: jid != self.xmpp.jid, roster):
                 entry = roster[jid]
-                statuses = "".join(status_map.get(r["show"], "*") for r in entry.resources.values())
-                rows.append({'statuses': statuses,
-                             'name': entry['name'],
-                             'jid': jid,
-                             'subscription': entry['subscription']})
-              statuses_col_width = max(len(row['statuses']) for row in rows)
-              name_col_width = max(len(row['name']) for row in rows) + 2
-              jid_col_width = max(len(row['jid']) for row in rows) + 2
-              for row in rows:
-                if not row["statuses"] and "all" not in args:
-                  continue
-                print(row['statuses'].ljust(statuses_col_width) + "  " + row['name'].ljust(name_col_width) + row['jid'].ljust(jid_col_width) + row['subscription'])
+                rows.append(("".join(status_map.get(r["show"], "*") for r in entry.resources.values()),
+                             entry["name"],
+                             jid,
+                             entry["subscription"]))
+            widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
+            if "all" not in args:
+              rows = filter(lambda row: row[0], rows)
+            for row in rows:
+              print("   ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)))
           elif command == "quit":
             self.xmpp.disconnect()
             sys.exit(0)
@@ -115,7 +117,7 @@ class Console:
               continue
           roster = self.xmpp.client_roster
           try:
-            jid = next(roster[k].jid for k in roster.keys() if roster[k]['name'] == recipient)
+            jid = next(roster[k].jid for k in roster.keys() if roster[k]["name"] == recipient)
           except StopIteration:
             print("unknown recipient")
           else:
@@ -140,7 +142,7 @@ if __name__ == "__main__":
 
   console = Console()
   secret = getpass.getpass("Secret (will not be stored): ")
-  console.xmpp = Client(config['jid'], secret, connected, console.on_event)
+  console.xmpp = Client(config["jid"], secret, connected, console.on_event)
   secret = None
 
   console.xmpp.connect()
@@ -151,5 +153,4 @@ if __name__ == "__main__":
   connected.release()
   connected = None
 
-  print("Connected")
   console.loop()
