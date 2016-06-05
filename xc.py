@@ -68,7 +68,7 @@ class Console:
       self.prepend(str(msg))
     elif event == "status":
       presence = args[0]
-      self.prepend("%s: %s" % (presence["from"], presence["show"]))
+      self.prepend("%s is now %s" % (presence["from"], presence["show"] or "online"))
 
   def loop(self):
     next_recipient = None
@@ -80,7 +80,9 @@ class Console:
         sys.exit(0)
         break
       else:
-        if line.startswith("/"):
+        if not line:
+          continue
+        elif line.startswith("/"):
           command, *args = line[1:].split(" ")
           if command == "roster":
             roster = self.xmpp.client_roster
