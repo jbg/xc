@@ -13,9 +13,10 @@ from sleekxmpp import ClientXMPP
 
 
 class Client(ClientXMPP):
-  def __init__(self, jid, secret, connected):
+  def __init__(self, jid, secret, connected, callback):
     super(Client, self).__init__(jid, secret)
     self.connected = connected
+    self.callback = callback
     self.add_event_handler("session_start", self.session_start)
     self.add_event_handler("message", self.message)
 
@@ -28,21 +29,19 @@ class Client(ClientXMPP):
     del self.connected
 
   def message(self, msg):
-    self.prepend(message)
+    self.callback("message", msg)
+
+  
+class Console:
+  def __init__(self):
+    super(Console, self).__init__()
+    readline.parse_and_bind("tab: complete")
+    readline.set_completer(self.completer)
+    readline.set_completer_delims(": ")
 
   def prepend(self, line):
     print("\x1b[2K\r%s\n> " % line, end="")
     readline.redisplay()
-  
-class Console:
-  prompt = "> "
-
-  def __init__(self, xmpp):
-    super(Console, self).__init__()
-    self.xmpp = xmpp
-    readline.parse_and_bind("tab: complete")
-    readline.set_completer(self.completer)
-    readline.set_completer_delims(": ")
 
   def completer(self, text, state):
     if text.startswith("/"):
@@ -56,6 +55,11 @@ class Console:
       return completions[state]
     except IndexError:
       return None
+
+  def on_event(self, event, *args):
+    if event == "message":
+      msg = args[0]
+      self.prepend(msg)
 
   def loop(self):
     next_recipient = None
@@ -134,12 +138,13 @@ if __name__ == "__main__":
 
   connected = threading.Condition()
 
+  console = Console()
   secret = getpass.getpass("Secret (will not be stored): ")
-  xmpp = Client(config['jid'], secret, connected)
+  console.xmpp = Client(config['jid'], secret, connected, console.on_event)
   secret = None
 
-  xmpp.connect()
-  xmpp.process(block=False)
+  console.xmpp.connect()
+  console.xmpp.process(block=False)
 
   connected.acquire()
   connected.wait()
@@ -147,4 +152,4 @@ if __name__ == "__main__":
   connected = None
 
   print("Connected")
-  Console(xmpp).loop()
+  console.loop()
