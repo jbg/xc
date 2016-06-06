@@ -47,8 +47,7 @@ class Console:
     self.next_recipient = None
 
   def prepend(self, line):
-    print("\x1b[2K\r%s\n%s> " % (line, self.next_recipient or ""), end="")
-    readline.redisplay()
+    print("\x1b[2K\r%s\n%s> %s" % (line, self.next_recipient or "", readline.get_line_buffer()), end="")
 
   def completer(self, text, state):
     if text.startswith("/"):
