@@ -2,6 +2,7 @@
 
 import getpass
 import json
+import logging
 import os
 import os.path
 import readline
@@ -43,9 +44,10 @@ class Console:
     readline.parse_and_bind("tab: complete")
     readline.set_completer(self.completer)
     readline.set_completer_delims(": ")
+    self.next_recipient = None
 
   def prepend(self, line):
-    print("\x1b[2K\r%s\n> " % line, end="")
+    print("\x1b[2K\r%s\n%s> " % (line, self.next_recipient or ""), end="")
     readline.redisplay()
 
   def completer(self, text, state):
@@ -64,17 +66,21 @@ class Console:
   def on_event(self, event, *args):
     if event == "message":
       msg = args[0]
-      # TODO don't print the whole stanza!
-      self.prepend(str(msg))
+      from_jid = msg["from"].bare
+      try:
+        roster = self.xmpp.client_roster
+        name = roster[from_jid]["name"]
+      except:
+        name = from_jid
+      self.prepend("%s: %s" % (name, msg["body"]))
     elif event == "status":
       presence = args[0]
       self.prepend("%s is now %s" % (presence["from"], presence["show"] or "online"))
 
   def loop(self):
-    next_recipient = None
     while True:
       try:
-        line = input("%s> " % (next_recipient or "")).strip()
+        line = input("%s> " % (self.next_recipient or "")).strip()
       except (EOFError, KeyboardInterrupt):
         self.xmpp.disconnect()
         sys.exit(0)
@@ -133,19 +139,28 @@ class Console:
           try:
             recipient, message = line.split(": ", 1)
           except ValueError:
-            if next_recipient is not None:
-              recipient = next_recipient
+            if self.next_recipient is not None:
+              recipient = self.next_recipient
+              message = line
             else:
               print("recipient: message")
               continue
           roster = self.xmpp.client_roster
-          try:
-            jid = next(roster[k].jid for k in roster.keys() if roster[k]["name"] == recipient)
-          except StopIteration:
-            print("unknown recipient")
-          else:
-            self.xmpp.send_message(mto=jid, mbody=message)
-            next_recipient = recipient
+          def jid_for_name(name):
+            try:
+              return next(roster[k].jid for k in roster.keys() if roster[k]["name"] == name)
+            except StopIteration:
+              return None
+          jid = jid_for_name(recipient)
+          if jid is None:
+            if self.next_recipient is not None and recipient != self.next_recipient:
+              recipient = self.next_recipient
+              jid = jid_for_name(recipient)
+              if jid is None:
+                print("unknown recipient")
+                continue
+          self.xmpp.send_message(mto=jid, mbody=message)
+          self.next_recipient = recipient
 
 
 if __name__ == "__main__":
@@ -160,6 +175,8 @@ if __name__ == "__main__":
     print("Please create ~/.xc.conf with content like:")
     print("{\"jid\": \"foo@bar.com\"}")
     sys.exit(1)
+
+  logging.basicConfig(level=logging.ERROR)
 
   connected = threading.Condition()
 
