@@ -21,14 +21,16 @@ class Client(ClientXMPP):
     self.add_event_handler("session_start", self.session_start)
     self.add_event_handler("changed_status", self.changed_status)
     self.add_event_handler("message", self.message)
+    self.register_plugin("xep_0013")
 
   def session_start(self, e):
     self.send_presence()
     self.get_roster()
-    self.connected.acquire()
-    self.connected.notify()
-    self.connected.release()
-    del self.connected
+    if self.connected is not None:
+      self.connected.acquire()
+      self.connected.notify()
+      self.connected.release()
+      self.connected = None
 
   def changed_status(self, presence):
     if not str(presence["from"]).startswith(self.jid + "/"):
