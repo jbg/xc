@@ -66,16 +66,21 @@ async def xmpp_client():
                       " ".join(msg.body.values())))
   client.stream.register_message_callback("chat", None, message_received)
 
-  class RosterItemCompleter(Completer):
+  class RosterItemAndCommandCompleter(Completer):
     def get_completions(self, document, complete_event):
-      if document.find_backwards(" ") != None:
+      text = document.text
+      if not text or " " in text or ":" in text:
         return
-      if document.find_backwards(":") != None:
-        return
-      for item in roster.items.values():
-        if item.name.startswith(document.text):
-          yield Completion(item.name + ": ", start_position=-len(document.text), display=item.name)
-  completer = RosterItemCompleter()
+      if text[0] == "/":
+        part = text[1:]
+        for command in ("roster", "quit", "help", "name"):
+          if command.startswith(part):
+            yield Completion(command, start_position=-len(part), display=command)
+      else:
+        for item in roster.items.values():
+          if item.name.startswith(text):
+            yield Completion(item.name + ": ", start_position=-len(text), display=item.name)
+  completer = RosterItemAndCommandCompleter()
 
   try:
     async with client.connected() as stream:
@@ -89,13 +94,7 @@ async def xmpp_client():
           try:
             command, *args = line[1:].split(" ")
             if command == "roster":
-              rows = []
-              status_map = {"away": "a", "xa": "x"}
-              for jid in filter(lambda jid: jid != my_jid, roster.items):
-                item = roster.items[jid]
-                rows.append((item.name,
-                             str(jid),
-                             item.subscription))
+              rows = [(item.name, str(jid), item.subscription) for jid, item in roster.items.items() if jid != my_jid]
               widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
               for row in rows:
                 print("   ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)))
@@ -108,7 +107,6 @@ async def xmpp_client():
               else:
                 roster.items[jid].name = name
             elif command == "quit":
-              sys.exit(0)
               break
             elif command == "help":
               print("To send a message, type a contact's name (tab-completion is available),")
