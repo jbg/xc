@@ -1,170 +1,20 @@
 #!/usr/bin/env python3
 
-import getpass
 import json
-import logging
 import os
 import os.path
-import readline
-import string
 import sys
-import threading
 
-from sleekxmpp import ClientXMPP
-
-
-class Client(ClientXMPP):
-  def __init__(self, jid, secret, connected, callback):
-    super(Client, self).__init__(jid, secret)
-    self.connected = connected
-    self.callback = callback
-    self.add_event_handler("session_start", self.session_start)
-    self.add_event_handler("changed_status", self.changed_status)
-    self.add_event_handler("message", self.message)
-    self.register_plugin("xep_0013")
-
-  def session_start(self, e):
-    self.send_presence()
-    self.get_roster()
-    if self.connected is not None:
-      self.connected.acquire()
-      self.connected.notify()
-      self.connected.release()
-      self.connected = None
-
-  def changed_status(self, presence):
-    if not str(presence["from"]).startswith(self.jid + "/"):
-      self.callback("status", presence)
-
-  def message(self, msg):
-    self.callback("message", msg)
-
-  
-class Console:
-  def __init__(self):
-    super(Console, self).__init__()
-    readline.parse_and_bind("tab: complete")
-    readline.set_completer(self.completer)
-    readline.set_completer_delims(": ")
-    self.next_recipient = None
-
-  def prepend(self, line):
-    print("\x1b[2K\r%s\n%s> %s" % (line, self.next_recipient or "", readline.get_line_buffer()), end="")
-
-  def completer(self, text, state):
-    if text.startswith("/"):
-      commands = ("/roster", "/quit")
-      completions = [c for c in commands if c.startswith(text)]
-    else:
-      roster = self.xmpp.client_roster
-      names = [roster[k]["name"] for k in roster.keys() if k != self.xmpp.jid]
-      completions = [n+": " for n in names if n.startswith(text)]
-    try:
-      return completions[state]
-    except IndexError:
-      return None
-
-  def on_event(self, event, *args):
-    if event == "message":
-      msg = args[0]
-      from_jid = msg["from"].bare
-      try:
-        roster = self.xmpp.client_roster
-        name = roster[from_jid]["name"]
-      except:
-        name = from_jid
-      self.prepend("%s: %s" % (name, msg["body"]))
-    elif event == "status":
-      presence = args[0]
-      self.prepend("%s is now %s" % (presence["from"], presence["show"] or "online"))
-
-  def loop(self):
-    while True:
-      try:
-        line = input("%s> " % (self.next_recipient or "")).strip()
-      except (EOFError, KeyboardInterrupt):
-        self.xmpp.disconnect()
-        sys.exit(0)
-        break
-      else:
-        if not line:
-          continue
-        elif line.startswith("/"):
-          command, *args = line[1:].split(" ")
-          if command == "roster":
-            roster = self.xmpp.client_roster
-            rows = []
-            status_map = {"away": "a", "xa": "x"}
-            for jid in filter(lambda jid: jid != self.xmpp.jid, roster):
-              entry = roster[jid]
-              rows.append(("".join(status_map.get(r["show"], "*") for r in entry.resources.values()),
-                           entry["name"],
-                           jid,
-                           entry["subscription"]))
-            widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
-            if "all" not in args:
-              rows = filter(lambda row: row[0], rows)
-            for row in rows:
-              print("   ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)))
-          elif command == "name":
-            try:
-              jid = args[0]
-              name = args[1]
-            except IndexError:
-              print("usage: /name JID NAME")
-            else:
-              self.xmpp.update_roster(jid, name=name)
-          elif command == "quit":
-            self.xmpp.disconnect()
-            sys.exit(0)
-            break
-          elif command == "help":
-            print("To send a message, type a contact's name (tab-completion is available),")
-            print("followed by a colon and space, followed by your message. After the first")
-            print("message, xc defaults to sending to the same contact.")
-            print("")
-            print("Example:")
-            print("")
-            print("   michael: hello")
-            print("")
-            print("Commands:")
-            print("")
-            print("/roster          print non-offline contacts")
-            print("/roster all      print all contacts")
-            print("/name JID NAME   set the name for a contact")
-            print("/quit            disconnect and then quit (also ctrl-d, ctrl-c)")
-            print("/help            this help")
-          else:
-            print("unrecognised command")
-        else:
-          try:
-            recipient, message = line.split(": ", 1)
-          except ValueError:
-            if self.next_recipient is not None:
-              recipient = self.next_recipient
-              message = line
-            else:
-              print("recipient: message")
-              continue
-          roster = self.xmpp.client_roster
-          def jid_for_name(name):
-            try:
-              return next(roster[k].jid for k in roster.keys() if roster[k]["name"] == name)
-            except StopIteration:
-              return None
-          jid = jid_for_name(recipient)
-          if jid is None:
-            if self.next_recipient is not None and recipient != self.next_recipient:
-              recipient = self.next_recipient
-              jid = jid_for_name(recipient)
-              if jid is None:
-                print("unknown recipient")
-                continue
-          self.xmpp.send_message(mto=jid, mbody=message)
-          self.next_recipient = recipient
+import aioxmpp
+import aioxmpp.presence
+import aioxmpp.roster
+from aioxmpp.security_layer import PinType, PublicKeyPinStore
+from prompt_toolkit.completion import Completion, Completer
+from prompt_toolkit.history import InMemoryHistory
+from prompt_toolkit.shortcuts import prompt_async
 
 
-if __name__ == "__main__":
+async def xmpp_client():
   try:
     with open(os.path.join(os.getenv("HOME"), ".xc.conf"), "r") as config_file:
       config = json.load(config_file)
@@ -177,21 +27,148 @@ if __name__ == "__main__":
     print("{\"jid\": \"foo@bar.com\"}")
     sys.exit(1)
 
-  logging.basicConfig(level=logging.ERROR)
+  async def get_secret(jid, attempt):
+    if attempt > 2:
+      return None
+    try:
+      return await prompt_async("Secret (will not be stored): ", is_password=True)
+    except:
+      return None
 
-  connected = threading.Condition()
+  async def tls_handshake_callback(verifier):
+    print("Warning: blindly accepting TLS certificate from %s" % verifier.transport.get_extra_info("server_hostname"))
+    return True
 
-  console = Console()
-  secret = getpass.getpass("Secret (will not be stored): ")
-  console.xmpp = Client(config["jid"], secret, connected, console.on_event)
-  secret = None
+  pin_store = PublicKeyPinStore()
+  pin_store.import_from_json(config.get("pkps", {}))
+  my_jid = aioxmpp.JID.fromstr(config["jid"])
+  security = aioxmpp.make_security_layer(get_secret, pin_store=pin_store, pin_type=PinType.PUBLIC_KEY, post_handshake_deferred_failure=tls_handshake_callback)
+  client = aioxmpp.PresenceManagedClient(my_jid, security)
+  presence = client.summon(aioxmpp.presence.Service)
+  roster = client.summon(aioxmpp.roster.Service)
 
-  console.xmpp.connect()
-  console.xmpp.process(block=False)
+  def name_for_jid(jid):
+    try:
+      return roster.items[jid].name
+    except:
+      return str(jid)
 
-  connected.acquire()
-  connected.wait()
-  connected.release()
-  connected = None
+  def peer_available(jid, presence):
+    print("%s is now online" % name_for_jid(jid.bare()))
+  presence.on_available.connect(peer_available)
 
-  console.loop()
+  def peer_unavailable(jid, presence):
+    print("%s is now offline" % name_for_jid(jid.bare()))
+  presence.on_unavailable.connect(peer_unavailable)
+
+  def message_received(msg):
+    print("%s: %s" % (name_for_jid(msg.from_.bare()),
+                      " ".join(msg.body.values())))
+  client.stream.register_message_callback("chat", None, message_received)
+
+  class RosterItemCompleter(Completer):
+    def get_completions(self, document, complete_event):
+      if document.find_backwards(" ") != None:
+        return
+      if document.find_backwards(":") != None:
+        return
+      for item in roster.items.values():
+        if item.name.startswith(document.text):
+          yield Completion(item.name + ": ", start_position=-len(document.text), display=item.name)
+  completer = RosterItemCompleter()
+
+  try:
+    async with client.connected() as stream:
+      next_recipient = None
+      while True:
+        line = await prompt_async("%s> " % (next_recipient or ""), patch_stdout=True, completer=completer)
+        if line.startswith("/"):
+          try:
+            command, *args = line[1:].split(" ")
+            if command == "roster":
+              rows = []
+              status_map = {"away": "a", "xa": "x"}
+              for jid in filter(lambda jid: jid != my_jid, roster.items):
+                item = roster.items[jid]
+                rows.append((item.name,
+                             str(jid),
+                             item.subscription))
+              widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
+              for row in rows:
+                print("   ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)))
+            elif command == "name":
+              try:
+                jid = args[0]
+                name = args[1]
+              except IndexError:
+                print("usage: /name JID NAME")
+              else:
+                roster.items[jid].name = name
+            elif command == "quit":
+              sys.exit(0)
+              break
+            elif command == "help":
+              print("To send a message, type a contact's name (tab-completion is available),")
+              print("followed by a colon and space, followed by your message. After the first")
+              print("message, xc defaults to sending to the same contact.")
+              print("")
+              print("Example:")
+              print("")
+              print("   michael: hello")
+              print("")
+              print("Commands:")
+              print("")
+              print("/roster          print the roster")
+              print("/name JID NAME   set the name for a contact")
+              print("/quit            disconnect and then quit (also ctrl-d, ctrl-c)")
+              print("/help            this help")
+            else:
+              print("unrecognised command")
+          except Exception as e:
+            print("exception handling command: %s" % e)
+        else:
+          try:
+            try:
+              recipient, message = line.split(": ", 1)
+            except ValueError:
+              if next_recipient is not None:
+                recipient = next_recipient
+                message = line
+              else:
+                print("recipient: message")
+                continue
+            jid_for_name = lambda recipient: next((jid for jid, item in roster.items.items() if item.name == recipient), None)
+            jid = jid_for_name(recipient)
+            if jid is None:
+              if next_recipient is not None and recipient != next_recipient:
+                recipient = next_recipient
+                jid = jid_for_name(recipient)
+                if jid is None:
+                  print("unknown recipient: %s" % recipient)
+                  continue
+              else:
+                print("unknown recipient: %s" % recipient)
+                continue
+            msg = aioxmpp.Message(to=jid, type_="chat")
+            msg.body[None] = message
+            await stream.send_and_wait_for_sent(msg)
+            next_recipient = recipient
+          except Exception as e:
+            print("exception sending message: %s" % e)
+  except Exception as e:
+    print("Failed to connect: %s" % e)
+
+if __name__ == "__main__":
+  import asyncio
+  import logging
+
+  logging.basicConfig(level=logging.CRITICAL)
+  loop = asyncio.get_event_loop()
+  try:
+    loop.run_until_complete(xmpp_client())
+  except (KeyboardInterrupt, EOFError):
+    pass
+  except Exception as e:
+    print("Exception in main loop: %s" % e)
+  finally:
+    loop.close()
