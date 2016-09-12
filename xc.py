@@ -81,7 +81,10 @@ async def xmpp_client():
     async with client.connected() as stream:
       next_recipient = None
       while True:
-        line = await prompt_async("%s> " % (next_recipient or ""), patch_stdout=True, completer=completer)
+        try:
+          line = await prompt_async("%s> " % (next_recipient or ""), patch_stdout=True, completer=completer)
+        except (KeyboardInterrupt, EOFError):
+          break
         if line.startswith("/"):
           try:
             command, *args = line[1:].split(" ")
@@ -155,6 +158,9 @@ async def xmpp_client():
             next_recipient = recipient
           except Exception as e:
             print("exception sending message: %s" % e)
+
+    print("Disconnecting…")
+    client.stop()
   except Exception as e:
     print("Failed to connect: %s" % e)
 

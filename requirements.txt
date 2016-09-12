@@ -1,0 +1,4 @@
+aioxmpp==0.7.0a0
+Babel==2.3.4
+multidict==2.0.1
+prompt-toolkit==1.0.7
