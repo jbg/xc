@@ -127,7 +127,7 @@ async def xmpp_client():
                 above_prompt.write("usage: /add JID\n")
               else:
                 jid = aioxmpp.JID.fromstr(jid)
-                roster.set_entry(jid)
+                await roster.set_entry(jid)
                 roster.subscribe(jid)
                 roster.approve(jid)
             elif command == "del":
@@ -137,8 +137,7 @@ async def xmpp_client():
                 above_prompt.write("usage: /del JID\n")
               else:
                 jid = aioxmpp.JID.fromstr(jid)
-                roster.unsubscribe(jid)
-                roster.remove_entry(jid)
+                await roster.remove_entry(jid)
             elif command == "quit":
               break
             elif command == "help":
