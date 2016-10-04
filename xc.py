@@ -120,7 +120,7 @@ async def xmpp_client():
                 above_prompt.write("usage: /name JID NAME\n")
               else:
                 jid = aioxmpp.JID.fromstr(jid)
-                roster.set_entry(jid, name=name)
+                await roster.set_entry(jid, name=name)
             elif command == "add":
               try:
                 jid = args[0]
