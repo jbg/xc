@@ -119,6 +119,7 @@ async def xmpp_client():
               except IndexError:
                 above_prompt.write("usage: /name JID NAME\n")
               else:
+                jid = aioxmpp.JID.fromstr(jid)
                 roster.items[jid].name = name
             elif command == "add":
               try:
