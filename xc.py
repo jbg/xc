@@ -54,9 +54,9 @@ async def xmpp_client():
         return
       if text[0] == "/":
         part = text[1:]
-        for command in ("roster", "name", "help", "quit"):
+        for command in ("roster", "name", "add", "del", "help", "quit"):
           if command.startswith(part):
-            yield Completion(command, start_position=-len(part), display=command)
+            yield Completion(command + " ", start_position=-len(part), display=command)
       elif roster is not None:
         for item in roster.items.values():
           if item.name.startswith(text):
@@ -72,7 +72,8 @@ async def xmpp_client():
   cli_app = create_prompt_application(get_prompt_tokens=get_prompt_tokens,
                                       completer=completer,
                                       reserve_space_for_menu=0,
-                                      history=history)
+                                      history=history,
+                                      get_title=lambda: "xc")
   cli_loop = create_asyncio_eventloop()
   cli = CommandLineInterface(application=cli_app, eventloop=cli_loop)
   above_prompt = cli.stdout_proxy()
@@ -108,9 +109,9 @@ async def xmpp_client():
             command, *args = line[1:].split(" ")
             if command == "roster":
               rows = [(item.name, str(jid), item.subscription) for jid, item in roster.items.items() if jid != my_jid]
-              widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
+              widths = [max(len(row[i] or "") for row in rows) for i in range(len(rows[0] or ""))]
               for row in rows:
-                above_prompt.write("   ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)) + "\n")
+                above_prompt.write("   ".join((cell or "").ljust(widths[i]) for i, cell in enumerate(row)) + "\n")
             elif command == "name":
               try:
                 jid = args[0]
@@ -119,21 +120,34 @@ async def xmpp_client():
                 above_prompt.write("usage: /name JID NAME\n")
               else:
                 roster.items[jid].name = name
+            elif command == "add":
+              try:
+                jid = args[0]
+              except IndexError:
+                above_prompt.write("usage: /add JID\n")
+              else:
+                jid = aioxmpp.JID.fromstr(jid)
+                roster.set_entry(jid)
+                roster.subscribe(jid)
+                roster.approve(jid)
+            elif command == "del":
+              try:
+                jid = args[0]
+              except IndexError:
+                above_prompt.write("usage: /del JID\n")
+              else:
+                jid = aioxmpp.JID.fromstr(jid)
+                roster.unsubscribe(jid)
+                roster.remove_entry(jid)
             elif command == "quit":
               break
             elif command == "help":
-              above_prompt.write("To send a message, type a contact's name (tab-completion is available),\n"
-                                 "followed by a colon and space, followed by your message. After the first\n"
-                                 "message, xc defaults to sending to the same contact.\n"
-                                 "\n"
-                                 "Example:\n"
-                                 "\n"
-                                 "   michael: hello\n"
-                                 "\n"
-                                 "Commands:\n"
-                                 "\n"
+              above_prompt.write("NAME: MESSAGE    send MESSAGE to NAME\n"
+                                 "MESSAGE          send MESSAGE to the last correspondent\n"
                                  "/roster          print the roster\n"
-                                 "/name JID NAME   set the name for a contact\n"
+                                 "/add JID         add JID to the roster\n"
+                                 "/del JID         remove JID from the roster\n"
+                                 "/name JID NAME   set the name of JID to NAME\n"
                                  "/quit            disconnect and then quit (also ctrl-d, ctrl-c)\n"
                                  "/help            this help\n")
             else:
