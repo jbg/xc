@@ -93,7 +93,9 @@ async def xmpp_client():
   presence.on_unavailable.connect(peer_unavailable)
 
   def message_received(msg):
-    above_prompt.write("%s: %s\n" % (name_for_jid(msg.from_.bare()), " ".join(msg.body.values())))
+    content = " ".join(msg.body.values())
+    if content:
+      above_prompt.write("%s: %s\n" % (name_for_jid(msg.from_.bare()), content))
   client.stream.register_message_callback("chat", None, message_received)
 
   try:
@@ -171,6 +173,7 @@ async def xmpp_client():
               if next_recipient is not None and recipient != next_recipient:
                 recipient = next_recipient
                 jid = jid_for_name(recipient)
+                message = line
             if jid is None:
               above_prompt.write("unknown recipient: %s\n" % recipient)
               continue
